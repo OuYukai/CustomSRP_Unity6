@@ -1,39 +1,85 @@
 ﻿using UnityEngine;
 using UnityEngine.Rendering;
 using System.Collections.Generic;
+using UnityEngine.Rendering.RenderGraphModule;
 
 namespace LiteRP
 {
     public class LiteRenderPipeline : RenderPipeline
     {
+        // SRPDefaultUnlit : shader 的 Pass 沒有指定 Name 時預設使用
         private readonly static ShaderTagId _shaderTagId = new ShaderTagId("SRPDefaultUnlit");
+
+        // 渲染圖
+        private RenderGraph m_RenderGraph = null;
+        // 渲染圖紀錄器
+        private LiteRenderGraphRecorder m_LiteRenderGraphRecorder = null;
+        // 上下文容器
+        private ContextContainer m_ContextContainer = null;
+
+        public LiteRenderPipeline()
+        {
+            InitializeRenderGraph();
+        }
         
-        // Old version
+        protected override void Dispose(bool disposing)
+        {
+            CleanupRenderGraph();
+            base.Dispose(disposing);
+        }
+        
+        // 初始化渲染圖
+        private void InitializeRenderGraph()
+        {
+            m_RenderGraph = new RenderGraph("LiteRPRenderGraph");
+            m_LiteRenderGraphRecorder = new LiteRenderGraphRecorder();
+            m_ContextContainer = new ContextContainer();
+        }
+        
+        // 清理渲染圖
+        private void CleanupRenderGraph()
+        {
+            m_RenderGraph?.Cleanup();
+            m_RenderGraph = null;
+            m_ContextContainer?.Dispose();
+            m_ContextContainer = null;
+            m_LiteRenderGraphRecorder = null;
+        }
+        
+        // 老版本
         protected override void Render(ScriptableRenderContext context, Camera[] cameras)
         {
             // 不實現
         }
         
+        // 新版本
         protected override void Render(ScriptableRenderContext context, List<Camera> cameras)
         {
-            // Start Render Context
+            // 開始渲染上下文
             BeginContextRendering(context, cameras);
             
-            // Render Camera
+            // 渲染相機
             for (int i = 0; i < cameras.Count; i++)
             {
                 Camera camera = cameras[i];
                 RenderCamera(context, camera);
             }
             
-            // End Render Context
+            // 結束渲染圖
+            m_RenderGraph.EndFrame();
+            
+            // 結束渲染上下文
             EndContextRendering(context, cameras);
         }
 
         private void RenderCamera(ScriptableRenderContext context, Camera camera)
         {
-            // Start Render Camera
+            // 開始渲染相機
             BeginCameraRendering(context, camera);
+            
+            // 準備 FrameData
+            if(!PrepareFrameData(context, camera))
+                return;
             
             // 獲取相機剔除參數，並進行剔除
             ScriptableCullingParameters cullingParameters;
@@ -47,51 +93,8 @@ namespace LiteRP
             // 設置相機屬性參數
             context.SetupCameraProperties(camera);
 
-            bool clearSkybox = camera.clearFlags == CameraClearFlags.Skybox;
-            bool clearDepth = camera.clearFlags != CameraClearFlags.Nothing;
-            bool clearColor = camera.clearFlags == CameraClearFlags.Color;
-            
-            // 清理渲染目標
-            cmd.ClearRenderTarget(clearDepth, clearColor, CoreUtils.ConvertSRGBToActiveColorSpace(camera.backgroundColor));
-
-            if (clearSkybox)
-            {
-                // 繪製天空盒
-                var skyboxRendererList = context.CreateSkyboxRendererList(camera);
-                cmd.DrawRendererList(skyboxRendererList);
-            } 
-            
-            // 指定渲染排序設置SortSettings
-            var sortSettings = new SortingSettings(camera);
-            
-            // 指定渲染狀態設置DrawSettings
-            var drawSettings = new DrawingSettings(_shaderTagId, sortSettings);
-
-            #region 繪製不透明物體
-
-            sortSettings.criteria = SortingCriteria.CommonOpaque;
-            // 指定渲染過濾設置FilterSettings
-            var filterListSettings = new FilteringSettings(RenderQueueRange.opaque);
-            // 創建渲染列表
-            var rendererListParams = new RendererListParams(cullingResults, drawSettings, filterListSettings);
-            var rendererList = context.CreateRendererList(ref rendererListParams);
-            // 繪製渲染列表
-            cmd.DrawRendererList(rendererList);
-            
-            #endregion
-
-            #region 繪製透明物體
-
-            sortSettings.criteria = SortingCriteria.CommonTransparent;
-            // 指定渲染過濾設置FilterSettings
-            filterListSettings = new FilteringSettings(RenderQueueRange.transparent);
-            // 創建渲染列表
-            rendererListParams = new RendererListParams(cullingResults, drawSettings, filterListSettings);
-            rendererList = context.CreateRendererList(ref rendererListParams);
-            // 繪製渲染列表
-            cmd.DrawRendererList(rendererList);
-
-            #endregion
+            // 紀錄並執行渲染圖
+            RecordAndExecuteRenderGraph(context, camera, cmd);
             
             // 提交命令緩衝區
             context.ExecuteCommandBuffer(cmd);
@@ -103,8 +106,30 @@ namespace LiteRP
             // 提交渲染上下文
             context.Submit();
             
-            // End Render Camera
+            // 結束渲染相機
             EndCameraRendering(context, camera);
+        }
+
+        private bool PrepareFrameData(ScriptableRenderContext context, Camera camera)
+        {
+            return true;
+        }
+
+        private void RecordAndExecuteRenderGraph(ScriptableRenderContext context, Camera camera, CommandBuffer cmd)
+        {
+            RenderGraphParameters renderGraphParameters = new RenderGraphParameters()
+            {
+                executionName = camera.name,
+                commandBuffer = cmd,
+                scriptableRenderContext = context,
+                currentFrameIndex = Time.frameCount
+            };
+            m_RenderGraph.BeginRecording(renderGraphParameters);
+            
+            // 開啟紀錄線
+            m_LiteRenderGraphRecorder.RecordRenderGraph(m_RenderGraph, m_ContextContainer);
+            
+            m_RenderGraph.EndRecordingAndExecute();
         }
     }
 }
