@@ -13,15 +13,12 @@ namespace LiteRP
         
         internal class DrawObjectsPassData
         {
-            internal TextureHandle backbufferHandle;
             internal RendererListHandle opaqueRendererListHandle;
             internal RendererListHandle transpatretRendererListHandle;
         }
 
-        private void AddDrawObjectsPass(RenderGraph renderGraph, ContextContainer frameData)
+        private void AddDrawObjectsPass(RenderGraph renderGraph, CameraData cameraData)
         {
-            CameraData cameraData = frameData.Get<CameraData>();
-            
             using (var builder = renderGraph.AddRasterRenderPass<DrawObjectsPassData>("Draw Objects Pass",
                        out var passData, s_DrawObjectsProfilingSampler))
             {
@@ -47,9 +44,7 @@ namespace LiteRP
                 // RenderGraph 引用半透明渲染列表
                 builder.UseRendererList(passData.transpatretRendererListHandle);
                 
-                // 導入Back Buffer
-                passData.backbufferHandle = renderGraph.ImportBackbuffer(BuiltinRenderTextureType.CurrentActive);
-                builder.SetRenderAttachment(passData.backbufferHandle, 0, AccessFlags.Write);
+                builder.SetRenderAttachment(m_BackbufferColorHandle, 0, AccessFlags.Write);
                 
                 // 設置渲染全局狀態
                 builder.AllowPassCulling(false);
